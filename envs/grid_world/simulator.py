@@ -50,7 +50,7 @@ parser.add_argument('-o', "--shield_options", dest='shield_options', help='Numbe
 parser.add_argument('-n', "--negative-reward", dest='neg_reward', help='Indicated whether negative reward should be used for unsafe actions', action='store_true', default=False)
 parser.add_argument('-p', "--huge-negative-reward", dest='huge_neg_reward', help='Indicated whether a huge negative reward should be used for unsafe actions', action='store_true', default=False)
 parser.add_argument('-r', "--sarsa", dest='sarsa', help='Indicated whether to use SARSA or default Q-learning', action='store_true', default=False)
-parser.add_argument("--num-steps", dest='num_steps', help='Number of interactions', type=int, default=1000000)
+parser.add_argument("--num-steps", dest='num_steps', help='Number of interactions', type=int, default=1000)
 parser.add_argument("--alpha", dest='alpha', help='Learning rate alpha', type=float, default=1/5)
 parser.add_argument("--seed", dest='seed', help='Randomseed', type=int, default=0)
 parser.add_argument('-x', "--cost_per_step", dest='cost_per_step', help='Estimated cost per step',
@@ -76,8 +76,8 @@ alpha = args.alpha
 seed = args.seed
 cost_per_step = args.cost_per_step
 MAX_STEPS = args.num_steps
-MIN_EPS = .00
-MIN_ALPHA = .00
+MIN_EPS = .01
+MIN_ALPHA = .20
 random.seed(seed)
 
 cooldown_epsilon = np.linspace(exploration, MIN_EPS, MAX_STEPS)
@@ -94,6 +94,7 @@ path = pngFileBasis[:pngFileBasis.rfind(os.path.sep)]
 # Settings
 # ==================================
 MAGNIFY = 64
+DISPLAY_N = 50
 
 # ==================================
 # Read parameter file
@@ -669,6 +670,11 @@ displayInfo = pygame.display.Info()
 MAGNIFY = min(MAGNIFY,displayInfo.current_w*3/4/xsize)
 MAGNIFY = min(MAGNIFY,displayInfo.current_h*3/4/ysize)
 
+def to_image(screenbuffer, epid, count):
+    directory = 'imgs/{}/{}'.format(save_file, epid)
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+    pygame.image.save(screenbuffer, '{}/{:03d}.png'.format(directory, count))
 
 class Map(Environment):
     def __init__(self):
@@ -852,11 +858,14 @@ class VisitAllColorsShaped(VisitAllColors):
         # goals are equal, potential is difference between steps
         if self.prev_state is None:
             return 0.0
-        if state[3] == self.prev_state[3]:
+        if state[2] == self.prev_state[2]:
             shaped_reward = self.potential(state) - self.potential(self.prev_state)
         else:
             # goals are not equal, potential difference is a single step cost
-            shaped_reward = self.cost_step
+            if state[2] > self.prev_state[2]:
+                shaped_reward = self.cost_step
+            else:
+                shaped_reward = -self.cost_step
         return shaped_reward
 
     def getReward(self):
@@ -892,11 +901,12 @@ class MyExperiment(Experiment):
     
         self.isPaused = False
         self.isCrashed = False
-        self.speed = 10
+        self.speed = 500
         self.num = 0
         self.robotXA = -1
         self.robotYA = -1
         self.bomb_counter = 0
+        self.epid = 0
         
         self.count = 0
         self.acc_reward = 0
@@ -999,15 +1009,22 @@ class MyExperiment(Experiment):
 
             # Draw "Good" Robot
             if self.robotXA!=-1:
-                pygame.draw.circle(self.screenBuffer, (192,32,32),
-                        int((self.robotXA+1)*MAGNIFY+MAGNIFY/2,(self.robotYA+1)*MAGNIFY+MAGNIFY/2)
-                        , int(MAGNIFY/3-2), 0)
+                # TODO FdH remove somevar
+                #somevar = int((self.robotXA+1)*MAGNIFY+MAGNIFY/2.0,(self.robotYA+1)*MAGNIFY+MAGNIFY/2.0)
+                x= ((self.robotXA+1)*MAGNIFY+MAGNIFY/2,(self.robotYA+1)*MAGNIFY+MAGNIFY/2)
+                agent_col = palette[colors[csf]*3:colors[csf]*3+3]
+                pygame.draw.circle(self.screenBuffer, agent_col,
+                        (int((self.robotXA+1)*MAGNIFY+MAGNIFY/2.0), int((self.robotYA+1)*MAGNIFY+MAGNIFY/2.0)),
+                        int(MAGNIFY/3.0-2),
+                        0)
                 pygame.draw.circle(self.screenBuffer, (255,255,255),
-                        int((self.robotXA+1)*MAGNIFY+MAGNIFY/2,(self.robotYA+1)*MAGNIFY+MAGNIFY/2)
-                        , int(MAGNIFY/3-1), 1)
+                        (int((self.robotXA+1)*MAGNIFY+MAGNIFY/2),int((self.robotYA+1)*MAGNIFY+MAGNIFY/2)),
+                        int(MAGNIFY/3-1),
+                        1)
                 pygame.draw.circle(self.screenBuffer, (0,0,0),
-                        int((self.robotXA+1)*MAGNIFY+MAGNIFY/2,(self.robotYA+1)*MAGNIFY+MAGNIFY/2)
-                        , int(MAGNIFY/3), 1)
+                        (int((self.robotXA+1)*MAGNIFY+MAGNIFY/2),int((self.robotYA+1)*MAGNIFY+MAGNIFY/2)),
+                        int(MAGNIFY/3),
+                        1)
 
             # Draw "Bad" Robots
             if enemies_enabled:
@@ -1026,7 +1043,9 @@ class MyExperiment(Experiment):
 
             # Flip!
             self.screen.blit(self.screenBuffer, (0, 0))
+            to_image(self.screenBuffer, self.epid, self.count)
             pygame.display.flip()
+
                                 
             # Make the transition
             if not self.isPaused:
@@ -1035,12 +1054,18 @@ class MyExperiment(Experiment):
             else:
                 self.clock.tick(3)
 
+        if self.count > 100000:
+            done = True
+        else:
+            done = False
+
         self.acc_reward += payoff * 10
         if self.collect_data:
             self.count += 1
-            if payoff > 0:
+            if payoff > 0 or done:
                 self.collect_episode_data_file.write(str(self.count) + "\n")
                 self.count = 0
+                self.epid += 1
                 level.reset()
             if self.stepid % 100 == 0:
                 self.collect_reward_data_file.write(str(self.acc_reward / 100.) + "\n")
@@ -1048,23 +1073,26 @@ class MyExperiment(Experiment):
             if self.stepid % 100000 == 0:
                 pass
         
-        if self.stepid % 100 == 0:
+        if self.epid % 1 == 0:
             sys.stdout.write("\033[K")
-            sys.stdout.write("[{2}{3}] ({0}/{1}) | alpha = {4} | epsilon = {5}\n".format(self.stepid, MAX_STEPS, '#'*int(math.floor(self.stepid/float(MAX_STEPS)*20)), ' '*int((20 - math.floor(self.stepid/float(MAX_STEPS)*20))), learner.alpha, learner.explorer.exploration))
+            sys.stdout.write("[{2}{3}] ({0}/{1}) | alpha = {4} | epsilon = {5}\n".format(self.epid, MAX_STEPS, '#'*int(math.floor(self.epid/float(MAX_STEPS)*20)), ' '*int((20 - math.floor(self.epid/float(MAX_STEPS)*20))), learner.alpha, learner.explorer.exploration))
             sys.stdout.write("\033[F")
-            
-        if self.stepid >= MAX_STEPS:
+
+        if (self.epid in [0, 19, 24, 39, 74]) or (self.epid % (DISPLAY_N - 1) == 0):
+            draw = True
+        else:
+            draw = False
+        if self.epid >= MAX_STEPS:
             print ("\nSimulation done!")
-            
             sys.exit()          
             
-        if payoff > 0:
+        if payoff > 0 or done:
             # episode done
             if save_file != None:
                 controller.params.reshape(controller.numRows, controller.numColumns).tofile(save_file)
 #            learner.alpha *= 0.999
-            learner.alpha = cooldown_alpha[self.stepid]
-            learner.explorer.exploration = cooldown_epsilon[self.stepid]
+            learner.alpha = cooldown_alpha[self.epid]
+            learner.explorer.exploration = cooldown_epsilon[self.epid]
             
         self.isCrashed = False
         if not self.isPaused:
